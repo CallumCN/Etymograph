@@ -1,0 +1,748 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Languages — prototype</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300;1,400&family=DM+Mono:wght@300;400&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --ink: #1a1814; --ink-mid: #4a4740; --ink-light: #8a8680;
+  --paper: #f7f4ee; --paper-mid: #ede9e0; --paper-dark: #ddd9ce; --paper-darker: #ccc8bc;
+  --amber: #b87c1a; --amber-light: #e8c06a; --amber-pale: #f5e9c8;
+  --red: #8b2e2e; --green: #2e5e3e;
+}
+
+html, body { height: 100%; }
+body {
+  font-family: 'Cormorant Garamond', serif;
+  background: var(--paper); color: var(--ink);
+  display: flex; flex-direction: column; min-height: 100vh;
+}
+
+a, .link { color: var(--amber); cursor: pointer; text-decoration: none; }
+
+nav {
+  height: 52px; padding: 0 1.5rem; display: flex; align-items: center;
+  justify-content: space-between; border-bottom: 1px solid var(--paper-dark);
+  flex-shrink: 0;
+}
+.nav-logo { font-family: 'DM Mono', monospace; font-size: 0.8rem; letter-spacing: 0.05em; }
+.nav-badge {
+  font-family: 'DM Mono', monospace; font-size: 0.65rem; letter-spacing: 0.08em;
+  color: var(--amber); border: 1px solid var(--amber-light); background: var(--amber-pale);
+  padding: 0.15rem 0.5rem; border-radius: 2px; margin-left: 0.75rem;
+}
+
+.app-body { flex: 1; display: flex; overflow: hidden; }
+
+.sidebar {
+  width: 300px; flex-shrink: 0; border-right: 1px solid var(--paper-dark);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.sidebar-head { padding: 1rem 1.25rem 0.75rem; border-bottom: 1px solid var(--paper-dark); }
+.search-input, .text-input, select, textarea {
+  width: 100%; padding: 0.5rem 0.75rem; font-family: 'DM Mono', monospace; font-size: 0.75rem;
+  background: var(--paper-mid); border: 1px solid var(--paper-dark); color: var(--ink);
+  outline: none; letter-spacing: 0.02em;
+}
+.search-input:focus, .text-input:focus, select:focus, textarea:focus { border-color: var(--amber); }
+
+.lang-list { flex: 1; overflow-y: auto; padding: 0.25rem 0; }
+.lang-item { padding: 0.65rem 1.25rem; cursor: pointer; border-left: 2px solid transparent; }
+.lang-item:hover { background: var(--paper-mid); }
+.lang-item.active { background: var(--amber-pale); border-left-color: var(--amber); }
+.lang-item-name { font-size: 1.05rem; }
+.lang-item-meta { font-family: 'DM Mono', monospace; font-size: 0.6rem; color: var(--ink-light); letter-spacing: 0.04em; }
+
+.btn {
+  padding: 0.45rem 0.9rem; font-family: 'DM Mono', monospace; font-size: 0.65rem;
+  letter-spacing: 0.08em; text-transform: uppercase; background: var(--ink); color: var(--paper);
+  border: none; cursor: pointer;
+}
+.btn:hover { background: var(--amber); }
+.btn.secondary { background: transparent; color: var(--ink-mid); border: 1px solid var(--paper-dark); }
+.btn.secondary:hover { background: var(--paper-mid); }
+.btn.danger:hover { background: #fdf0f0; color: var(--red); }
+.btn:disabled { opacity: 0.4; cursor: default; }
+
+.add-btn { margin: 0.75rem 1.25rem; }
+
+.main-panel { flex: 1; overflow-y: auto; padding: 2rem 2.5rem; }
+
+.empty-state { height: 100%; display: flex; align-items: center; justify-content: center; color: var(--ink-light); font-family: 'DM Mono', monospace; font-size: 0.75rem; letter-spacing: 0.08em; text-transform: uppercase; }
+
+.section { margin-bottom: 2.25rem; }
+.section-label {
+  font-family: 'DM Mono', monospace; font-size: 0.65rem; letter-spacing: 0.14em;
+  text-transform: uppercase; color: var(--ink-light); margin-bottom: 0.75rem;
+}
+.form-row { display: flex; gap: 0.5rem; margin-bottom: 0.5rem; align-items: center; flex-wrap: wrap; }
+.form-group { margin-bottom: 0.75rem; max-width: 420px; }
+.form-group label { display: block; font-family: 'DM Mono', monospace; font-size: 0.6rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-light); margin-bottom: 0.3rem; }
+
+.lang-title { font-size: 2.2rem; font-weight: 300; display: flex; align-items: center; gap: 0.6rem; }
+.lang-slug { font-family: 'DM Mono', monospace; font-size: 0.7rem; color: var(--ink-light); margin-bottom: 1.25rem; }
+
+.chip { display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.25rem 0.65rem; background: var(--paper-mid); border: 1px solid var(--paper-dark); font-size: 0.85rem; margin: 0 0.4rem 0.4rem 0; cursor: pointer; }
+.chip:hover { border-color: var(--amber-light); background: var(--amber-pale); }
+.chip .x { color: var(--ink-light); margin-left: 0.2rem; }
+.chip .x:hover { color: var(--red); }
+.chip.primary { border-color: var(--amber); }
+
+.row-list { border-top: 1px solid var(--paper-mid); }
+.row-item { display: flex; align-items: center; gap: 0.75rem; padding: 0.5rem 0; border-bottom: 1px solid var(--paper-mid); cursor: pointer; }
+.row-item:hover .row-main { color: var(--amber); }
+.row-item.active { background: var(--amber-pale); }
+.row-main { flex: 1; }
+.row-sub { font-family: 'DM Mono', monospace; font-size: 0.65rem; color: var(--ink-light); }
+.row-remove { font-family: 'DM Mono', monospace; font-size: 0.65rem; color: var(--ink-light); padding: 0.15rem 0.4rem; }
+.row-remove:hover { color: var(--red); }
+
+.checklist-row { display: flex; align-items: center; gap: 0.5rem; padding: 0.3rem 0; font-size: 0.9rem; }
+.checklist-row .pct { font-family: 'DM Mono', monospace; font-size: 0.65rem; color: var(--ink-light); margin-left: auto; }
+.checklist-row .tag { font-family: 'DM Mono', monospace; font-size: 0.55rem; color: var(--amber); border: 1px solid var(--amber-light); padding: 0 0.3rem; }
+
+.morph-char { display: inline-flex; align-items: center; justify-content: center; min-width: 1.4rem; height: 1.8rem; padding: 0 0.15rem; font-size: 1.1rem; border: 1px solid var(--paper-dark); background: var(--paper-mid); cursor: pointer; user-select: none; }
+.morph-char:hover { border-color: var(--amber-light); }
+
+.err { font-family: 'DM Mono', monospace; font-size: 0.65rem; color: var(--red); margin-top: 0.4rem; min-height: 1em; }
+.hint { font-family: 'DM Mono', monospace; font-size: 0.58rem; color: var(--ink-light); margin-top: 0.3rem; }
+
+#auth-overlay { position: fixed; inset: 0; background: var(--paper); z-index: 999; display: flex; align-items: center; justify-content: center; }
+#auth-overlay.hidden { display: none; }
+</style>
+</head>
+<body>
+
+<div id="auth-overlay"><span style="font-family:'DM Mono',monospace;font-size:0.7rem;color:var(--ink-light);">loading…</span></div>
+
+<nav>
+  <span><span class="nav-logo">Etymon</span><span class="nav-badge">languages prototype</span></span>
+  <span><a href="/index.html">lexicon (legacy)</a> &nbsp; <a href="#" onclick="doSignOut()">sign out</a></span>
+</nav>
+
+<div class="app-body">
+  <aside class="sidebar">
+    <div class="sidebar-head">
+      <input class="search-input" id="lang-search" placeholder="search languages...">
+    </div>
+    <div class="lang-list" id="lang-list"></div>
+    <button class="btn add-btn" onclick="openCreateLanguage()">+ New language</button>
+  </aside>
+
+  <div class="main-panel" id="main-panel">
+    <div class="empty-state">Select a language, or create one</div>
+  </div>
+</div>
+
+<script type="module">
+import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
+
+const SUPABASE_URL  = 'https://hecehemjqgxgicxaqvcm.supabase.co';
+const SUPABASE_ANON = 'sb_publishable_-Vl64dYzEq1OxWIIJ-n-OQ_l8KVUDyh';
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON, {
+  auth: { persistSession: true, storageKey: 'sb-session', storage: window.localStorage }
+});
+
+let currentUserId = null;
+let languages = [];
+let selected = null; // full detail object for the selected language
+let selectedLexemeId = null;
+let armedAncestorId = null; // which etymology's ancestor is "armed" for char-painting
+let charMap = {}; // charIndex -> ancestor_lexeme_id, for the currently open lexeme
+
+const palette = d3.schemeTableau10;
+const colorFor = (() => { const m = new Map(); let i = 0;
+  return id => { if (!m.has(id)) m.set(id, palette[i++ % palette.length]); return m.get(id); };
+})();
+
+async function init() {
+  const session = await new Promise(resolve => {
+    supabase.auth.onAuthStateChange((event, s) => { if (event === 'INITIAL_SESSION') resolve(s); });
+  });
+  if (!session) { window.location.replace('/auth.html'); return; }
+  currentUserId = session.user.id;
+  supabase.auth.onAuthStateChange((event) => { if (event === 'SIGNED_OUT') window.location.replace('/auth.html'); });
+  document.getElementById('auth-overlay').classList.add('hidden');
+
+  document.getElementById('lang-search').addEventListener('input', e => loadLanguages(e.target.value));
+  await loadLanguages('');
+}
+window.doSignOut = async () => { await supabase.auth.signOut(); window.location.replace('/auth.html'); };
+
+// ─── LANGUAGE LIST ─────────────────────────────────────────────────────
+async function loadLanguages(term) {
+  let q = supabase.from('languages').select('*').order('name');
+  if (term) q = q.ilike('name', `%${term}%`);
+  const { data, error } = await q;
+  if (error) { console.error(error); return; }
+  languages = data || [];
+  renderLanguageList();
+}
+
+function renderLanguageList() {
+  const list = document.getElementById('lang-list');
+  list.innerHTML = '';
+  languages.forEach(l => {
+    const el = document.createElement('div');
+    el.className = 'lang-item' + (selected && selected.language.id === l.id ? ' active' : '');
+    el.innerHTML = `<div class="lang-item-name">${esc(l.name)}</div>
+      <div class="lang-item-meta">${l.is_constructed ? 'constructed' : 'natural'} · ${l.visibility}${l.is_constructed && l.visibility==='public' ? (l.publicly_editable ? ' · open-edit' : ' · closed-edit') : ''}</div>`;
+    el.onclick = () => selectLanguage(l.id);
+    list.appendChild(el);
+  });
+}
+
+// ─── CREATE LANGUAGE ───────────────────────────────────────────────────
+window.openCreateLanguage = function() {
+  selected = null; selectedLexemeId = null;
+  document.getElementById('main-panel').innerHTML = `
+    <h2 class="lang-title" style="font-size:1.6rem">New language</h2>
+    <div class="form-group"><label>Name</label><input class="text-input" id="nl-name" placeholder="e.g. Old Marish"></div>
+    <div class="form-group"><label>Family name <span style="font-weight:400">(optional — only meaningful if this is a root with no parent)</span></label><input class="text-input" id="nl-family" placeholder="e.g. Marish"></div>
+    <div class="form-group">
+      <label>Type</label>
+      <label style="display:inline-flex;align-items:center;gap:0.3rem;font-family:inherit;text-transform:none;letter-spacing:normal;font-size:1rem;color:var(--ink);margin-right:1rem;">
+        <input type="radio" name="nl-kind" value="natural" checked onchange="renderCreateLangOptions()"> Natural
+      </label>
+      <label style="display:inline-flex;align-items:center;gap:0.3rem;font-family:inherit;text-transform:none;letter-spacing:normal;font-size:1rem;color:var(--ink);">
+        <input type="radio" name="nl-kind" value="constructed" onchange="renderCreateLangOptions()"> Constructed
+      </label>
+      <div class="hint">Natural languages are always public, with open editing. Constructed languages are yours to configure.</div>
+    </div>
+    <div id="nl-constructed-options"></div>
+    <div class="err" id="nl-err"></div>
+    <div class="form-row">
+      <button class="btn" onclick="submitCreateLanguage()">Create</button>
+      <button class="btn secondary" onclick="renderEmpty()">Cancel</button>
+    </div>`;
+};
+
+window.renderCreateLangOptions = function() {
+  const kind = document.querySelector('input[name=nl-kind]:checked').value;
+  const box = document.getElementById('nl-constructed-options');
+  if (kind !== 'constructed') { box.innerHTML = ''; return; }
+  box.innerHTML = `
+    <div class="form-group">
+      <label>Visibility</label>
+      <label style="display:inline-flex;align-items:center;gap:0.3rem;font-family:inherit;text-transform:none;letter-spacing:normal;font-size:1rem;color:var(--ink);margin-right:1rem;">
+        <input type="radio" name="nl-vis" value="public" checked onchange="renderCreateLangOptions()"> Public
+      </label>
+      <label style="display:inline-flex;align-items:center;gap:0.3rem;font-family:inherit;text-transform:none;letter-spacing:normal;font-size:1rem;color:var(--ink);">
+        <input type="radio" name="nl-vis" value="private" onchange="renderCreateLangOptions()"> Private
+      </label>
+    </div>
+    <div id="nl-vis-options"></div>`;
+  renderVisOptions();
+};
+
+function renderVisOptions() {
+  const vis = document.querySelector('input[name=nl-vis]:checked')?.value || 'public';
+  const box = document.getElementById('nl-vis-options');
+  if (!box) return;
+  if (vis === 'private') {
+    box.innerHTML = `
+      <div class="form-group">
+        <label style="display:flex;align-items:flex-start;gap:0.5rem;font-family:inherit;text-transform:none;letter-spacing:normal;font-size:0.9rem;color:var(--ink-mid);">
+          <input type="checkbox" id="nl-ack" style="margin-top:0.2rem">
+          <span>I am the creator of this constructed language, or am acting with the creator's authorization, and I'm choosing to keep it private.</span>
+        </label>
+      </div>`;
+  } else {
+    box.innerHTML = `
+      <div class="form-group">
+        <label style="display:flex;align-items:flex-start;gap:0.5rem;font-family:inherit;text-transform:none;letter-spacing:normal;font-size:0.9rem;color:var(--ink-mid);">
+          <input type="checkbox" id="nl-editable">
+          <span>Allow other signed-in users to edit this language's lexemes directly (you can turn this off again later).</span>
+        </label>
+      </div>`;
+  }
+}
+
+window.submitCreateLanguage = async function() {
+  const name = document.getElementById('nl-name').value.trim();
+  const family_name = document.getElementById('nl-family').value.trim() || null;
+  const kind = document.querySelector('input[name=nl-kind]:checked').value;
+  const errEl = document.getElementById('nl-err');
+  if (!name) { errEl.textContent = 'Name is required.'; return; }
+
+  const is_constructed = kind === 'constructed';
+  let visibility = 'public', publicly_editable = false, ack = false;
+  if (is_constructed) {
+    visibility = document.querySelector('input[name=nl-vis]:checked').value;
+    if (visibility === 'private') {
+      ack = document.getElementById('nl-ack')?.checked || false;
+      if (!ack) { errEl.textContent = 'Private constructed languages require the authorship acknowledgment.'; return; }
+    } else {
+      publicly_editable = document.getElementById('nl-editable')?.checked || false;
+    }
+  }
+
+  const slug = slugify(name) + '-' + Math.random().toString(36).slice(2, 7);
+  const { data: lang, error } = await supabase.from('languages').insert({
+    name, slug, is_constructed, visibility, publicly_editable, family_name,
+    original_creation_acknowledged: ack,
+    original_creation_acknowledged_at: ack ? new Date().toISOString() : null,
+    created_by: currentUserId
+  }).select().single();
+
+  if (error) { errEl.textContent = error.message; return; }
+
+  if (is_constructed) {
+    const { error: ownErr } = await supabase.from('language_ownership')
+      .insert({ language_id: lang.id, user_id: currentUserId, status: 'owner' });
+    if (ownErr) console.error(ownErr);
+  }
+
+  await loadLanguages(document.getElementById('lang-search').value);
+  selectLanguage(lang.id);
+};
+
+function slugify(s) { return s.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, ''); }
+
+// ─── SELECT / RENDER LANGUAGE DETAIL ──────────────────────────────────
+window.selectLanguage = async function(id) {
+  selectedLexemeId = null; armedAncestorId = null;
+  const { data: language, error } = await supabase.from('languages').select('*').eq('id', id).single();
+  if (error) { alert(error.message); return; }
+
+  const [{ data: ownership }, { data: parentEdges }, { data: childEdges }, { data: lexemes }] = await Promise.all([
+    supabase.from('language_ownership').select('*').eq('language_id', id),
+    supabase.from('language_genealogy').select('*').eq('child_language_id', id),
+    supabase.from('language_genealogy').select('*').eq('parent_language_id', id),
+    supabase.from('lexemes').select('*').eq('language_id', id).order('form')
+  ]);
+
+  const relatedIds = [...new Set([
+    ...(parentEdges||[]).map(e => e.parent_language_id),
+    ...(childEdges||[]).map(e => e.child_language_id)
+  ])];
+  const { data: relatedLangs } = relatedIds.length
+    ? await supabase.from('languages').select('id,name').in('id', relatedIds)
+    : { data: [] };
+  const langNameById = Object.fromEntries((relatedLangs||[]).map(l => [l.id, l.name]));
+
+  const ownerIds = (ownership||[]).map(o => o.user_id);
+  const { data: ownerProfiles } = ownerIds.length
+    ? await supabase.from('profiles').select('id,username').in('id', ownerIds)
+    : { data: [] };
+  const usernameById = Object.fromEntries((ownerProfiles||[]).map(p => [p.id, p.username]));
+
+  selected = { language, ownership: ownership||[], parentEdges: parentEdges||[], childEdges: childEdges||[], lexemes: lexemes||[], langNameById, usernameById };
+  renderLanguageList();
+  renderLanguageDetail();
+};
+
+function myOwnershipRow() {
+  return (selected.ownership||[]).find(o => o.user_id === currentUserId);
+}
+function iCanGovern() {
+  return !!myOwnershipRow() && myOwnershipRow().status === 'owner';
+}
+function iCanEditContent() {
+  if (!selected.language.is_constructed) return true; // natural: open to any signed-in user
+  if (iCanGovern()) return true;
+  return selected.language.visibility === 'public' && selected.language.publicly_editable;
+}
+
+function renderEmpty() {
+  selected = null;
+  document.getElementById('main-panel').innerHTML = '<div class="empty-state">Select a language, or create one</div>';
+  renderLanguageList();
+}
+window.renderEmpty = renderEmpty;
+
+function renderLanguageDetail() {
+  const { language } = selected;
+  const main = document.getElementById('main-panel');
+
+  const ownersHTML = language.is_constructed ? `
+    <div class="section">
+      <div class="section-label">Owners</div>
+      ${selected.ownership.filter(o => o.status === 'owner').map(o => `
+        <span class="chip">${esc(selected.usernameById[o.user_id] || o.user_id)}
+          ${iCanGovern() ? `<span class="x" onclick="removeOwnership('${o.id}')">✕</span>` : ''}
+        </span>`).join('') || '<span class="hint">No owners yet.</span>'}
+      ${selected.ownership.filter(o => o.status === 'invited').map(o => `
+        <span class="chip" style="opacity:0.6">${esc(selected.usernameById[o.user_id] || o.user_id)} (invited)
+          ${iCanGovern() ? `<span class="x" onclick="removeOwnership('${o.id}')">✕</span>` : ''}
+        </span>`).join('')}
+      ${selected.ownership.filter(o => o.status === 'requested').map(o => `
+        <span class="chip" style="border-color:var(--amber)">${esc(selected.usernameById[o.user_id] || o.user_id)} (requested)
+          ${iCanGovern() ? `<span class="x" style="color:var(--green)" onclick="approveRequest('${o.id}')">✓ approve</span>
+          <span class="x" onclick="removeOwnership('${o.id}')">✕</span>` : ''}
+        </span>`).join('')}
+      <div class="form-row" style="margin-top:0.5rem">
+        ${iCanGovern() ? `<input class="text-input" id="invite-username" placeholder="invite by username" style="max-width:200px"><button class="btn secondary" onclick="inviteOwner()">Invite</button>` : ''}
+        ${!myOwnershipRow() && language.visibility === 'public' ? `<button class="btn secondary" onclick="requestOwnership()">Request ownership</button>` : ''}
+        ${myOwnershipRow() && myOwnershipRow().status === 'owner' ? `<button class="btn secondary danger" onclick="removeOwnership('${myOwnershipRow().id}')">Leave</button>` : ''}
+      </div>
+    </div>` : '';
+
+  const governanceHTML = (language.is_constructed && iCanGovern()) ? `
+    <div class="section">
+      <div class="section-label">Governance</div>
+      <div class="form-row">
+        <label style="display:flex;align-items:center;gap:0.4rem;font-family:inherit;font-size:0.9rem;">
+          <input type="checkbox" ${language.visibility === 'private' ? 'checked' : ''} onchange="setVisibility(this.checked)"> Private
+        </label>
+        ${language.visibility === 'public' ? `
+        <label style="display:flex;align-items:center;gap:0.4rem;font-family:inherit;font-size:0.9rem;margin-left:1.5rem;">
+          <input type="checkbox" ${language.publicly_editable ? 'checked' : ''} onchange="setPubliclyEditable(this.checked)"> Open to public editing
+        </label>` : ''}
+      </div>
+    </div>` : '';
+
+  const parentsHTML = `
+    <div class="section">
+      <div class="section-label">Parent languages</div>
+      ${selected.parentEdges.map(e => `
+        <span class="chip ${e.is_primary ? 'primary' : ''}" onclick="selectLanguage('${e.parent_language_id}')">
+          ${esc(selected.langNameById[e.parent_language_id] || '…')} ${e.is_primary ? '(primary)' : '(' + e.confidence + ')'}
+          ${iCanGovern() ? `<span class="x" onclick="event.stopPropagation();removeGenealogyEdge('${e.id}')">✕</span>` : ''}
+        </span>`).join('') || '<span class="hint">No parents recorded — this is a root.</span>'}
+      ${iCanGovern() ? `
+      <div class="form-row" style="margin-top:0.5rem">
+        <input class="text-input" id="parent-search" placeholder="search languages to add as parent..." style="max-width:220px" oninput="searchParentCandidates(this.value)">
+        <select id="parent-confidence"><option value="attested">attested</option><option value="probable">probable</option><option value="hypothetical">hypothetical</option><option value="disputed">disputed</option></select>
+        <label style="display:flex;align-items:center;gap:0.3rem;font-family:inherit;font-size:0.85rem;"><input type="checkbox" id="parent-primary"> primary</label>
+      </div>
+      <div id="parent-candidates"></div>` : ''}
+    </div>`;
+
+  const childrenHTML = `
+    <div class="section">
+      <div class="section-label">Descendant languages</div>
+      ${selected.childEdges.map(e => `
+        <span class="chip ${e.is_primary ? 'primary' : ''}" onclick="selectLanguage('${e.child_language_id}')">
+          ${esc(selected.langNameById[e.child_language_id] || '…')} ${e.is_primary ? '(primary)' : '(' + e.confidence + ')'}
+        </span>`).join('') || '<span class="hint">None yet.</span>'}
+    </div>`;
+
+  const lexemesHTML = `
+    <div class="section">
+      <div class="section-label">Lexemes (${selected.lexemes.length})</div>
+      <div class="row-list" id="lexeme-rows">
+        ${selected.lexemes.map(w => `
+          <div class="row-item ${w.id === selectedLexemeId ? 'active' : ''}" onclick="selectLexeme('${w.id}')">
+            <div class="row-main">${esc(w.form)} <span class="row-sub">${esc(w.gloss||'')}</span></div>
+            ${iCanEditContent() ? `<span class="row-remove" onclick="event.stopPropagation();deleteLexeme('${w.id}')">delete</span>` : ''}
+          </div>`).join('')}
+      </div>
+      ${iCanEditContent() ? `
+      <div class="form-row" style="margin-top:0.75rem">
+        <input class="text-input" id="nw-form" placeholder="word" style="max-width:140px">
+        <input class="text-input" id="nw-transcription" placeholder="/transcription/" style="max-width:140px">
+        <input class="text-input" id="nw-gloss" placeholder="gloss / meaning" style="max-width:200px">
+        <button class="btn secondary" onclick="addLexeme()">+ Add lexeme</button>
+      </div>` : ''}
+    </div>`;
+
+  main.innerHTML = `
+    <div class="lang-title">${esc(language.name)}
+      <span class="nav-badge">${language.is_constructed ? 'constructed' : 'natural'} · ${language.visibility}</span>
+    </div>
+    <div class="lang-slug">${language.family_name ? 'Family: ' + esc(language.family_name) + ' · ' : ''}${esc(language.slug)}</div>
+    ${ownersHTML}
+    ${governanceHTML}
+    ${parentsHTML}
+    ${childrenHTML}
+    <div class="section">
+      <div class="section-label">Vocabulary contribution</div>
+      <button class="btn secondary" onclick="loadVocabContribution()">Show contribution chart</button>
+      <div id="vocab-contribution-panel"></div>
+    </div>
+    ${lexemesHTML}
+    <div class="section" id="lexeme-detail-section"></div>
+    <div class="section">
+      <div class="section-label">Public edit history</div>
+      <div class="hint">Not wired up yet — revision writes go through a server-side function so the audit trail can't be forged by a client, and that function doesn't exist yet. Schema's in place (see 0001 migration's revisions tables).</div>
+    </div>`;
+
+  if (selectedLexemeId) renderLexemeDetail();
+}
+
+// ─── GOVERNANCE ────────────────────────────────────────────────────────
+window.setVisibility = async function(makePrivate) {
+  if (makePrivate && !confirm('Make this language private? Only owners/admins will be able to see it.')) { renderLanguageDetail(); return; }
+  const patch = { visibility: makePrivate ? 'private' : 'public' };
+  if (makePrivate) { patch.original_creation_acknowledged = true; patch.original_creation_acknowledged_at = new Date().toISOString(); patch.publicly_editable = false; }
+  const { error } = await supabase.from('languages').update(patch).eq('id', selected.language.id);
+  if (error) { alert(error.message); return; }
+  selectLanguage(selected.language.id);
+};
+window.setPubliclyEditable = async function(val) {
+  const { error } = await supabase.from('languages').update({ publicly_editable: val }).eq('id', selected.language.id);
+  if (error) { alert(error.message); return; }
+  selectLanguage(selected.language.id);
+};
+
+// ─── OWNERSHIP ─────────────────────────────────────────────────────────
+window.inviteOwner = async function() {
+  const username = document.getElementById('invite-username').value.trim();
+  if (!username) return;
+  const { data: prof, error: pErr } = await supabase.from('profiles').select('id').eq('username', username).maybeSingle();
+  if (pErr || !prof) { alert('No such user.'); return; }
+  const { error } = await supabase.from('language_ownership').insert({ language_id: selected.language.id, user_id: prof.id, status: 'invited', invited_by: currentUserId });
+  if (error) { alert(error.message); return; }
+  selectLanguage(selected.language.id);
+};
+window.requestOwnership = async function() {
+  const { error } = await supabase.from('language_ownership').insert({ language_id: selected.language.id, user_id: currentUserId, status: 'requested' });
+  if (error) { alert(error.message); return; }
+  selectLanguage(selected.language.id);
+};
+window.approveRequest = async function(rowId) {
+  const { error } = await supabase.from('language_ownership').update({ status: 'owner' }).eq('id', rowId);
+  if (error) { alert(error.message); return; }
+  selectLanguage(selected.language.id);
+};
+window.removeOwnership = async function(rowId) {
+  const { error } = await supabase.from('language_ownership').delete().eq('id', rowId);
+  if (error) { alert(error.message); return; }
+  selectLanguage(selected.language.id);
+};
+
+// ─── GENEALOGY ─────────────────────────────────────────────────────────
+let parentCandidates = [];
+window.searchParentCandidates = async function(term) {
+  if (!term) { document.getElementById('parent-candidates').innerHTML = ''; return; }
+  const { data } = await supabase.from('languages').select('id,name').ilike('name', `%${term}%`).neq('id', selected.language.id).limit(10);
+  parentCandidates = data || [];
+  document.getElementById('parent-candidates').innerHTML = parentCandidates.map(c =>
+    `<span class="chip" onclick="addParent('${c.id}')">${esc(c.name)}</span>`).join('') || '<span class="hint">No matches.</span>';
+};
+window.addParent = async function(parentId) {
+  const confidence = document.getElementById('parent-confidence').value;
+  const is_primary = document.getElementById('parent-primary').checked;
+  const { error } = await supabase.from('language_genealogy').insert({
+    child_language_id: selected.language.id, parent_language_id: parentId, is_primary, confidence, created_by: currentUserId
+  });
+  if (error) { alert(error.message); return; }
+  selectLanguage(selected.language.id);
+};
+window.removeGenealogyEdge = async function(edgeId) {
+  const { error } = await supabase.from('language_genealogy').delete().eq('id', edgeId);
+  if (error) { alert(error.message); return; }
+  selectLanguage(selected.language.id);
+};
+
+// ─── LEXEMES ───────────────────────────────────────────────────────────
+window.addLexeme = async function() {
+  const form = document.getElementById('nw-form').value.trim();
+  if (!form) return;
+  const transcription = document.getElementById('nw-transcription').value.trim() || null;
+  const gloss = document.getElementById('nw-gloss').value.trim() || null;
+  const { error } = await supabase.from('lexemes').insert({ language_id: selected.language.id, form, transcription, gloss, created_by: currentUserId });
+  if (error) { alert(error.message); return; }
+  selectLanguage(selected.language.id);
+};
+window.deleteLexeme = async function(id) {
+  if (!confirm('Delete this lexeme?')) return;
+  const { error } = await supabase.from('lexemes').delete().eq('id', id);
+  if (error) { alert(error.message); return; }
+  if (selectedLexemeId === id) selectedLexemeId = null;
+  selectLanguage(selected.language.id);
+};
+
+window.selectLexeme = function(id) {
+  selectedLexemeId = id; armedAncestorId = null; charMap = {};
+  renderLanguageDetail();
+};
+
+async function renderLexemeDetail() {
+  const w = selected.lexemes.find(x => x.id === selectedLexemeId);
+  const box = document.getElementById('lexeme-detail-section');
+  if (!w) { box.innerHTML = ''; return; }
+
+  const { data: etys } = await supabase.from('etymologies').select('*').eq('descendant_lexeme_id', w.id);
+  const ancestorIds = (etys||[]).map(e => e.ancestor_lexeme_id);
+  const { data: ancestorLexemes } = ancestorIds.length
+    ? await supabase.from('lexemes').select('id,form,language_id').in('id', ancestorIds)
+    : { data: [] };
+  const ancestorLangIds = [...new Set((ancestorLexemes||[]).map(l => l.language_id))];
+  const { data: ancestorLangs } = ancestorLangIds.length
+    ? await supabase.from('languages').select('id,name').in('id', ancestorLangIds)
+    : { data: [] };
+  const langNameById = Object.fromEntries((ancestorLangs||[]).map(l => [l.id, l.name]));
+  const lexById = Object.fromEntries((ancestorLexemes||[]).map(l => [l.id, l]));
+
+  // rebuild charMap from stored grapheme_ranges so repeated opens don't lose it
+  charMap = {};
+  (etys||[]).forEach(e => (e.grapheme_ranges || []).forEach(r => {
+    for (let i = Number(r.start); i < Number(r.end); i++) charMap[i] = e.ancestor_lexeme_id;
+  }));
+
+  const etyRowsHTML = (etys||[]).map(e => {
+    const lex = lexById[e.ancestor_lexeme_id];
+    const label = lex ? `${lex.form} (${langNameById[lex.language_id] || '…'})` : e.ancestor_lexeme_id;
+    return `<div class="row-item ${armedAncestorId === e.ancestor_lexeme_id ? 'active' : ''}" onclick="armAncestor('${e.ancestor_lexeme_id}')">
+      <span style="width:0.9em;height:0.9em;border-radius:50%;display:inline-block;background:${colorFor(e.ancestor_lexeme_id)}"></span>
+      <div class="row-main">${esc(label)} <span class="row-sub">${e.relation_type} · ${e.confidence}</span></div>
+      <span class="row-remove" onclick="event.stopPropagation();removeEtymology('${e.id}')">remove</span>
+    </div>`;
+  }).join('') || '<span class="hint">No etymons yet.</span>';
+
+  const charsHTML = w.form.split('').map((ch, i) => {
+    const anc = charMap[i];
+    const style = anc ? `background:${colorFor(anc)};color:#fff;border-color:transparent` : '';
+    return `<span class="morph-char" style="${style}" onclick="paintChar(${i})">${esc(ch)}</span>`;
+  }).join('');
+
+  box.innerHTML = `
+    <div class="section-label">Etymology — ${esc(w.form)}</div>
+    <div style="margin-bottom:0.75rem">${charsHTML}</div>
+    <div class="hint">${armedAncestorId ? 'Click characters to toggle them onto the armed ancestor, then Save.' : 'Click an etymon below to arm it for character painting.'}</div>
+    <div class="row-list" style="margin:0.5rem 0">${etyRowsHTML}</div>
+    ${armedAncestorId ? `<button class="btn secondary" onclick="saveGraphemeRanges()">Save character assignment</button>` : ''}
+    ${iCanEditContent() ? `
+    <div class="form-row" style="margin-top:1rem">
+      <input class="text-input" id="ety-search" placeholder="search any lexeme to add as ancestor..." style="max-width:240px" oninput="searchAncestorCandidates(this.value)">
+      <select id="ety-relation"><option>inherited</option><option>borrowed</option><option>calque</option><option>compound</option><option>derivation</option><option>influenced_by</option></select>
+      <select id="ety-confidence"><option>attested</option><option>probable</option><option>hypothetical</option><option>disputed</option></select>
+    </div>
+    <div id="ety-candidates"></div>` : ''}`;
+}
+
+window.armAncestor = function(ancestorId) {
+  armedAncestorId = armedAncestorId === ancestorId ? null : ancestorId;
+  renderLexemeDetail();
+};
+window.paintChar = function(i) {
+  if (!armedAncestorId) return;
+  charMap[i] = charMap[i] === armedAncestorId ? undefined : armedAncestorId;
+  renderLexemeDetail();
+};
+window.saveGraphemeRanges = async function() {
+  const w = selected.lexemes.find(x => x.id === selectedLexemeId);
+  // collapse charMap into contiguous ranges per ancestor
+  const byAncestor = {};
+  Object.entries(charMap).forEach(([i, anc]) => { if (anc) (byAncestor[anc] = byAncestor[anc]||[]).push(Number(i)); });
+  for (const [ancestorId, idxs] of Object.entries(byAncestor)) {
+    idxs.sort((a,b) => a-b);
+    const ranges = [];
+    let start = idxs[0], prev = idxs[0];
+    for (let k = 1; k <= idxs.length; k++) {
+      if (k < idxs.length && idxs[k] === prev + 1) { prev = idxs[k]; continue; }
+      ranges.push({ start, end: prev + 1 });
+      if (k < idxs.length) { start = idxs[k]; prev = idxs[k]; }
+    }
+    await supabase.from('etymologies').update({ grapheme_ranges: ranges }).eq('descendant_lexeme_id', w.id).eq('ancestor_lexeme_id', ancestorId);
+  }
+  armedAncestorId = null;
+  renderLexemeDetail();
+};
+
+window.searchAncestorCandidates = async function(term) {
+  const box = document.getElementById('ety-candidates');
+  if (!term) { box.innerHTML = ''; return; }
+  const { data } = await supabase.from('lexemes').select('id,form,gloss,language_id').ilike('form', `%${term}%`).limit(10);
+  const langIds = [...new Set((data||[]).map(l => l.language_id))];
+  const { data: langs } = langIds.length ? await supabase.from('languages').select('id,name').in('id', langIds) : { data: [] };
+  const langName = Object.fromEntries((langs||[]).map(l => [l.id, l.name]));
+  box.innerHTML = (data||[]).filter(l => l.id !== selectedLexemeId).map(l =>
+    `<span class="chip" onclick="addEtymology('${l.id}')">${esc(l.form)} <span class="row-sub">(${esc(langName[l.language_id]||'…')})</span></span>`
+  ).join('') || '<span class="hint">No matches.</span>';
+};
+window.addEtymology = async function(ancestorId) {
+  const relation_type = document.getElementById('ety-relation').value;
+  const confidence = document.getElementById('ety-confidence').value;
+  const { error } = await supabase.from('etymologies').insert({
+    descendant_lexeme_id: selectedLexemeId, ancestor_lexeme_id: ancestorId, relation_type, confidence, created_by: currentUserId
+  });
+  if (error) { alert(error.message); return; }
+  renderLexemeDetail();
+};
+window.removeEtymology = async function(id) {
+  const { error } = await supabase.from('etymologies').delete().eq('id', id);
+  if (error) { alert(error.message); return; }
+  renderLexemeDetail();
+};
+
+// ─── VOCABULARY CONTRIBUTION (simplified vertical Sankey) ─────────────
+window.loadVocabContribution = async function() {
+  const langId = selected.language.id;
+  const [{ data: contrib }, { data: totalsRow }] = await Promise.all([
+    supabase.from('language_vocab_contribution').select('*').eq('target_language_id', langId),
+    supabase.from('language_vocab_totals').select('*').eq('language_id', langId).maybeSingle()
+  ]);
+  const total = totalsRow?.total_lexemes || 0;
+  const sourceIds = (contrib||[]).map(c => c.source_language_id);
+  const { data: sourceLangs } = sourceIds.length ? await supabase.from('languages').select('id,name').in('id', sourceIds) : { data: [] };
+  const nameById = Object.fromEntries((sourceLangs||[]).map(l => [l.id, l.name]));
+  const primaryIds = new Set(selected.parentEdges.filter(e => e.is_primary).map(e => e.parent_language_id));
+
+  const rows = (contrib||[])
+    .map(c => ({ id: c.source_language_id, name: nameById[c.source_language_id] || '…', count: c.contributed_count, primary: primaryIds.has(c.source_language_id) }))
+    .sort((a,b) => b.count - a.count);
+
+  const panel = document.getElementById('vocab-contribution-panel');
+  if (!total) { panel.innerHTML = '<div class="hint">No lexemes yet.</div>'; return; }
+  if (!rows.length) { panel.innerHTML = '<div class="hint">No etymologies pointing outside this language yet — nothing to chart.</div>'; return; }
+
+  panel.innerHTML = `
+    <div class="form-row" style="margin:0.75rem 0 0.25rem">
+      <button class="btn secondary" id="vc-select-all">Select all</button>
+      <button class="btn secondary" id="vc-primary-only">Only primary parents</button>
+    </div>
+    <div id="vc-checklist"></div>
+    <svg id="vc-svg" width="680" height="220" style="margin-top:0.75rem"></svg>`;
+
+  const checked = new Set(rows.filter(r => r.primary).length ? rows.filter(r => r.primary).map(r => r.id) : rows.map(r => r.id));
+
+  function renderChecklist() {
+    document.getElementById('vc-checklist').innerHTML = rows.map(r => `
+      <label class="checklist-row">
+        <input type="checkbox" data-id="${r.id}" ${checked.has(r.id) ? 'checked' : ''}>
+        <span style="width:0.9em;height:0.9em;border-radius:50%;background:${colorFor(r.id)};display:inline-block"></span>
+        ${esc(r.name)} ${r.primary ? '<span class="tag">primary</span>' : ''}
+        <span class="pct">${(100*r.count/total).toFixed(1)}%</span>
+      </label>`).join('');
+    document.querySelectorAll('#vc-checklist input[type=checkbox]').forEach(cb => {
+      cb.onchange = () => { cb.checked ? checked.add(cb.dataset.id) : checked.delete(cb.dataset.id); drawSankey(); };
+    });
+  }
+  document.getElementById('vc-select-all').onclick = () => { rows.forEach(r => checked.add(r.id)); renderChecklist(); drawSankey(); };
+  document.getElementById('vc-primary-only').onclick = () => { checked.clear(); rows.filter(r=>r.primary).forEach(r => checked.add(r.id)); renderChecklist(); drawSankey(); };
+
+  function drawSankey() {
+    const svg = d3.select('#vc-svg'); svg.selectAll('*').remove();
+    const plotW = 640, x0 = 20, topY = 20, topH = 36, bottomY = 160, bottomH = 36;
+    const selectedRows = rows.filter(r => checked.has(r.id));
+    const selectedTotal = selectedRows.reduce((s,r) => s + r.count, 0);
+    const residual = Math.max(0, total - selectedTotal);
+    const segments = [...selectedRows.map(r => ({ id: r.id, name: r.name, count: r.count, color: colorFor(r.id) })),
+                       ...(residual > 0 ? [{ id: '__unknown', name: 'Unknown / unselected', count: residual, color: '#b9b4a6' }] : [])];
+    let x = x0;
+    segments.forEach(seg => {
+      const w = plotW * (seg.count / total);
+      seg.x = x; seg.w = w; x += w;
+      if (seg.id !== '__unknown') {
+        svg.append('rect').attr('x', seg.x).attr('y', topY).attr('width', seg.w).attr('height', topH).attr('fill', seg.color).attr('stroke', 'var(--paper)');
+        svg.append('text').attr('x', seg.x + 4).attr('y', topY - 6).attr('font-size', '10px').attr('font-family', 'DM Mono, monospace').attr('fill', '#4a4740').text(seg.w > 40 ? seg.name : '');
+        const midTop = seg.x + seg.w / 2;
+        svg.append('path')
+          .attr('d', `M${seg.x},${topY+topH} C${seg.x},${(topY+topH+bottomY)/2} ${seg.x},${(topY+topH+bottomY)/2} ${seg.x},${bottomY}
+                      L${seg.x+seg.w},${bottomY} C${seg.x+seg.w},${(topY+topH+bottomY)/2} ${seg.x+seg.w},${(topY+topH+bottomY)/2} ${seg.x+seg.w},${topY+topH} Z`)
+          .attr('fill', seg.color).attr('opacity', 0.25);
+      }
+      svg.append('rect').attr('x', seg.x).attr('y', bottomY).attr('width', seg.w).attr('height', bottomH).attr('fill', seg.color).attr('stroke', 'var(--paper)');
+    });
+    svg.append('text').attr('x', x0).attr('y', bottomY + bottomH + 16).attr('font-size', '11px').attr('font-family', 'DM Mono, monospace').attr('fill', '#1a1814').text(selected.language.name + ' — vocabulary composition');
+  }
+
+  renderChecklist();
+  drawSankey();
+};
+
+function esc(s) { return (s||'').toString().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+init();
+</script>
+</body>
+</html>
