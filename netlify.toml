@@ -1,0 +1,7 @@
+# The site root is published as-is (so index.html / auth.html keep working
+# unchanged), but we build the TSX app in web/ and copy its output into a
+# `languages/` folder at the repo root, so it's served at /languages —
+# replacing the old single-file languages.html prototype.
+[build]
+  command = "cd web && npm install && npm run build && rm -rf ../languages && mkdir -p ../languages && cp -r dist/. ../languages/"
+  publish = "."
