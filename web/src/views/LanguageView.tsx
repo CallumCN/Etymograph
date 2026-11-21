@@ -1,8 +1,8 @@
 import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { navigate } from '../lib/router';
+import { findOrCreateGenealogyDisplay } from '../lib/displays';
 import type { Confidence, Language, LanguageGenealogyEdge, LanguageOwnership, Lexeme } from '../types';
-import GenealogyDisplay from './GenealogyDisplay';
 
 export default function LanguageView({ languageId, userId }: { languageId: string; userId: string }) {
   const [language, setLanguage] = useState<Language | null>(null);
@@ -13,7 +13,7 @@ export default function LanguageView({ languageId, userId }: { languageId: strin
   const [langNameById, setLangNameById] = useState<Record<string, string>>({});
   const [usernameById, setUsernameById] = useState<Record<string, string>>({});
   const [error, setError] = useState('');
-  const [showVocab, setShowVocab] = useState(false);
+  const [isSaved, setIsSaved] = useState(false);
 
   const [parentSearch, setParentSearch] = useState('');
   const [parentCandidates, setParentCandidates] = useState<{ id: string; name: string }[]>([]);
@@ -59,12 +59,29 @@ export default function LanguageView({ languageId, userId }: { languageId: strin
       ? await supabase.from('profiles').select('id,username').in('id', ownerIds)
       : { data: [] as { id: string; username: string }[] };
     setUsernameById(Object.fromEntries((profs || []).map((p) => [p.id, p.username])));
-  }, [languageId]);
+
+    const { data: saved } = await supabase.from('saved_languages').select('*').eq('user_id', userId).eq('language_id', languageId).maybeSingle();
+    setIsSaved(!!saved);
+  }, [languageId, userId]);
 
   useEffect(() => {
-    setShowVocab(false);
     reload();
   }, [reload]);
+
+  async function toggleSaved() {
+    if (isSaved) {
+      await supabase.from('saved_languages').delete().eq('user_id', userId).eq('language_id', languageId);
+    } else {
+      await supabase.from('saved_languages').insert({ user_id: userId, language_id: languageId });
+    }
+    setIsSaved(!isSaved);
+  }
+
+  async function openGenealogyDisplay() {
+    if (!language) return;
+    const display = await findOrCreateGenealogyDisplay(userId, languageId, language.name);
+    navigate(`/displays/${display.id}`);
+  }
 
   if (error) return <div className="err">{error}</div>;
   if (!language) return <div className="hint">Loading…</div>;
@@ -224,6 +241,17 @@ export default function LanguageView({ languageId, userId }: { languageId: strin
         {language.slug}
       </div>
 
+      <div className="form-row" style={{ marginBottom: '1.5rem' }}>
+        <button className="btn secondary" onClick={openGenealogyDisplay}>
+          Open genealogy display
+        </button>
+        {!iCanGovern && (
+          <button className="btn secondary" onClick={toggleSaved}>
+            {isSaved ? 'Unsave' : 'Save'} language
+          </button>
+        )}
+      </div>
+
       {language.is_constructed && (
         <div className="section">
           <div className="section-label">Owners</div>
@@ -366,17 +394,6 @@ export default function LanguageView({ languageId, userId }: { languageId: strin
           </span>
         ))}
         {!childEdges.length && <span className="hint">None yet.</span>}
-      </div>
-
-      <div className="section">
-        <div className="section-label">Vocabulary contribution</div>
-        {!showVocab ? (
-          <button className="btn secondary" onClick={() => setShowVocab(true)}>
-            Show contribution chart
-          </button>
-        ) : (
-          <GenealogyDisplay language={language} parentEdges={parentEdges} />
-        )}
       </div>
 
       <div className="section">

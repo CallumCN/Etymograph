@@ -78,6 +78,39 @@ export interface Etymology {
   created_at: string;
 }
 
+export type DisplayKind = 'etymology' | 'genealogy';
+
+export interface Display {
+  id: string;
+  kind: DisplayKind;
+  title: string;
+  owner_id: string;
+  visibility: Visibility;
+  root_lexeme_id: string | null;
+  root_language_id: string | null;
+  config: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Follow {
+  follower_id: string;
+  followee_id: string;
+  created_at: string;
+}
+
+export interface SavedLanguage {
+  user_id: string;
+  language_id: string;
+  created_at: string;
+}
+
+export interface SavedDisplay {
+  user_id: string;
+  display_id: string;
+  created_at: string;
+}
+
 export interface VocabContributionRow {
   target_language_id: string;
   source_language_id: string;
