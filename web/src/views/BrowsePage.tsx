@@ -28,6 +28,7 @@ export default function BrowsePage({ userId }: { userId: string }) {
   const [items, setItems] = useState<Item[]>([]);
   const [openBandPanel, setOpenBandPanel] = useState<BandPanel>(null);
   const [bandItems, setBandItems] = useState<Item[]>([]);
+  const [bandError, setBandError] = useState<string | null>(null);
   const [bandLoading, setBandLoading] = useState(false);
 
   useEffect(() => {
@@ -86,7 +87,9 @@ export default function BrowsePage({ userId }: { userId: string }) {
     }
     setOpenBandPanel(panel);
     setBandLoading(true);
-    setBandItems(await loadBandItems(panel, userId));
+    const { items: loaded, error } = await loadBandItems(panel, userId);
+    setBandItems(loaded);
+    setBandError(error);
     setBandLoading(false);
   }
 
@@ -102,6 +105,8 @@ export default function BrowsePage({ userId }: { userId: string }) {
               <Popup align="left" onClose={() => setOpenBandPanel(null)}>
                 {bandLoading ? (
                   <div className="hint popup-row">Loading…</div>
+                ) : bandError ? (
+                  <div className="err popup-row">{bandError}</div>
                 ) : bandItems.length ? (
                   bandItems.map((it) => (
                     <div
@@ -155,36 +160,46 @@ export default function BrowsePage({ userId }: { userId: string }) {
   );
 }
 
-async function loadBandItems(panel: Exclude<BandPanel, null>, userId: string): Promise<Item[]> {
+async function loadBandItems(panel: Exclude<BandPanel, null>, userId: string): Promise<{ items: Item[]; error: string | null }> {
   if (panel === 'followedUsers') {
-    const { data: rows } = await supabase.from('follows').select('followee_id').eq('follower_id', userId);
+    const { data: rows, error: e1 } = await supabase.from('follows').select('followee_id').eq('follower_id', userId);
+    if (e1) return { items: [], error: e1.message };
     const ids = (rows || []).map((r) => r.followee_id);
-    if (!ids.length) return [];
-    const { data: profs } = await supabase.from('profiles').select('*').in('id', ids);
-    return (profs || []).map((p: Profile) => ({ id: p.id, title: p.display_name || p.username, subtitle: `@${p.username}`, route: `/users/${p.username}` }));
+    if (!ids.length) return { items: [], error: null };
+    const { data: profs, error: e2 } = await supabase.from('profiles').select('*').in('id', ids);
+    if (e2) return { items: [], error: e2.message };
+    return {
+      items: (profs || []).map((p: Profile) => ({ id: p.id, title: p.display_name || p.username, subtitle: `@${p.username}`, route: `/users/${p.username}` })),
+      error: null,
+    };
   }
-  if (panel === 'lexicons') {
-    const { data: rows } = await supabase.from('language_ownership').select('language_id').eq('user_id', userId).eq('status', 'owner');
+  if (panel === 'lexicons' || panel === 'savedLexicons') {
+    const ownedQuery =
+      panel === 'lexicons'
+        ? supabase.from('language_ownership').select('language_id').eq('user_id', userId).eq('status', 'owner')
+        : supabase.from('saved_languages').select('language_id').eq('user_id', userId);
+    const { data: rows, error: e1 } = await ownedQuery;
+    if (e1) return { items: [], error: e1.message };
     const ids = (rows || []).map((r) => r.language_id);
-    if (!ids.length) return [];
-    const { data: langs } = await supabase.from('languages').select('*').in('id', ids);
-    return (langs || []).map((l: Language) => ({ id: l.id, title: l.name, subtitle: l.is_constructed ? 'constructed' : 'natural', route: `/languages/${l.id}` }));
-  }
-  if (panel === 'savedLexicons') {
-    const { data: rows } = await supabase.from('saved_languages').select('language_id').eq('user_id', userId);
-    const ids = (rows || []).map((r) => r.language_id);
-    if (!ids.length) return [];
-    const { data: langs } = await supabase.from('languages').select('*').in('id', ids);
-    return (langs || []).map((l: Language) => ({ id: l.id, title: l.name, subtitle: l.is_constructed ? 'constructed' : 'natural', route: `/languages/${l.id}` }));
+    if (!ids.length) return { items: [], error: null };
+    const { data: langs, error: e2 } = await supabase.from('languages').select('*').in('id', ids);
+    if (e2) return { items: [], error: e2.message };
+    return {
+      items: (langs || []).map((l: Language) => ({ id: l.id, title: l.name, subtitle: l.is_constructed ? 'constructed' : 'natural', route: `/languages/${l.id}` })),
+      error: null,
+    };
   }
   if (panel === 'displays') {
-    const { data: displays } = await supabase.from('displays').select('*').eq('owner_id', userId);
-    return (displays || []).map((d: Display) => ({ id: d.id, title: d.title, subtitle: d.kind, route: `/displays/${d.id}` }));
+    const { data: displays, error } = await supabase.from('displays').select('*').eq('owner_id', userId);
+    if (error) return { items: [], error: error.message };
+    return { items: (displays || []).map((d: Display) => ({ id: d.id, title: d.title, subtitle: d.kind, route: `/displays/${d.id}` })), error: null };
   }
   // savedDisplays
-  const { data: rows } = await supabase.from('saved_displays').select('display_id').eq('user_id', userId);
+  const { data: rows, error: e1 } = await supabase.from('saved_displays').select('display_id').eq('user_id', userId);
+  if (e1) return { items: [], error: e1.message };
   const ids = (rows || []).map((r) => r.display_id);
-  if (!ids.length) return [];
-  const { data: displays } = await supabase.from('displays').select('*').in('id', ids);
-  return (displays || []).map((d: Display) => ({ id: d.id, title: d.title, subtitle: d.kind, route: `/displays/${d.id}` }));
+  if (!ids.length) return { items: [], error: null };
+  const { data: displays, error: e2 } = await supabase.from('displays').select('*').in('id', ids);
+  if (e2) return { items: [], error: e2.message };
+  return { items: (displays || []).map((d: Display) => ({ id: d.id, title: d.title, subtitle: d.kind, route: `/displays/${d.id}` })), error: null };
 }
