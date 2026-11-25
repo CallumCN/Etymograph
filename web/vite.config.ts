@@ -1,12 +1,12 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-// Served from /languages/ on the deployed site — see netlify.toml, which
-// copies this project's build output into a `languages/` folder at the
-// repo root so it coexists with the legacy index.html / auth.html.
+// Served from the site root — see netlify.toml, which copies this
+// project's build output over the repo root. This overwrites the old
+// index.html in the deployed artifact only; the legacy file stays
+// untouched in git, just no longer live.
 export default defineConfig({
   plugins: [react()],
-  base: '/languages/',
   build: {
     outDir: 'dist',
   },

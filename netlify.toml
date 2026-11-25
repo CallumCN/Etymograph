@@ -1,7 +1,8 @@
-# The site root is published as-is (so index.html / auth.html keep working
-# unchanged), but we build the TSX app in web/ and copy its output into a
-# `languages/` folder at the repo root, so it's served at /languages —
-# replacing the old single-file languages.html prototype.
+# Builds the TSX app in web/ and copies its output over the repo root, so
+# it's the site's landing page at "/". This overwrites index.html in the
+# deployed build artifact only — the legacy file stays tracked in git,
+# just no longer reachable on the live site. auth.html is untouched and
+# still serves as the shared sign-in page.
 [build]
-  command = "cd web && npm install && npm run build && rm -rf ../languages && mkdir -p ../languages && cp -r dist/. ../languages/"
+  command = "cd web && npm install && npm run build && cp -r dist/. ../"
   publish = "."
