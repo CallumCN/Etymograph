@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
+import { navigate } from '../lib/router';
 import { colorFor } from '../lib/colors';
 import type { Display, Language, LanguageGenealogyEdge } from '../types';
 
@@ -154,7 +155,10 @@ export default function GenealogyDisplay({
           <label key={r.id} className="checklist-row">
             <input type="checkbox" checked={checked.has(r.id)} disabled={!canEdit} onChange={() => toggle(r.id)} />
             <span className="swatch" style={{ background: colorFor(r.id) }} />
-            {r.name} {r.primary && <span className="tag">primary</span>}
+            <span className="link" onClick={() => navigate(`/languages/${r.id}`)}>
+              {r.name}
+            </span>{' '}
+            {r.primary && <span className="tag">primary</span>}
             <span className="pct">{((100 * r.count) / total).toFixed(1)}%</span>
           </label>
         ))}
@@ -164,7 +168,16 @@ export default function GenealogyDisplay({
           <g key={seg.id}>
             {!seg.isResidual && (
               <>
-                <rect x={seg.x} y={topY} width={seg.w} height={topH} fill={seg.color} stroke="#fff" />
+                <rect
+                  x={seg.x}
+                  y={topY}
+                  width={seg.w}
+                  height={topH}
+                  fill={seg.color}
+                  stroke="#fff"
+                  style={{ cursor: 'pointer' }}
+                  onClick={() => navigate(`/languages/${seg.id}`)}
+                />
                 {seg.w > 40 && (
                   <text x={seg.x + 4} y={topY - 6} fontSize={10} fontFamily="DM Mono, monospace" fill="var(--ink-mid)">
                     {seg.name}

@@ -1,31 +1,48 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { forceSimulation, forceLink, forceManyBody, forceCollide, forceCenter, type SimulationNodeDatum } from 'd3-force';
 import { supabase } from '../lib/supabase';
 import { navigate } from '../lib/router';
 import { colorFor } from '../lib/colors';
 import type { Display, Etymology, Lexeme } from '../types';
 
-interface GraphNode extends SimulationNodeDatum {
+interface RawNode {
   id: string;
   form: string;
   languageId: string;
   native: boolean;
 }
-interface GraphLink {
-  source: string;
-  target: string;
+interface RawEdge {
+  descendantId: string;
+  ancestorId: string;
+  ranges: { start: number; end: number }[] | null;
+}
+interface GraphNode {
+  id: string;
+  form: string;
+  languageId: string;
+  native: boolean;
+  width: number;
+  height: number;
+  x: number; // center
+  y: number; // center
 }
 
-const WIDTH = 760;
-const HEIGHT = 480;
+const NODE_HEIGHT = 32;
+const NODE_PAD_X = 10;
+const NODE_GAP = 28;
+const ROW_HEIGHT = 110;
+const TOP_PAD = 30;
+const VIEW_W = 800;
+const VIEW_H = 460;
 
-// The language-wide aggregate etymology display: every lexeme in this
-// language, plus their (possibly foreign-language) ancestors — nothing
-// else. Node positions persist in `display.config.positions`; nodes
-// without a saved position (freshly added lexemes) get placed near their
-// linked neighbors by a small, localized simulation that leaves every
-// already-positioned node fixed, rather than re-laying out the whole
-// graph on every edit.
+// The language-wide aggregate etymology display, rendered the way the
+// original app's "fluvial" view did it: words are text-fit boxes laid out
+// by generation (root ancestors at top), connected by flowing bands whose
+// width at the descendant end matches exactly the character range
+// (grapheme_ranges) attributed to that ancestor — not plain lines between
+// circles. Node positions persist in `display.config.positions`; a node
+// without a saved position (a freshly added lexeme) gets the layout
+// algorithm's computed slot, while every already-positioned node keeps
+// its saved spot exactly, so edits never reshuffle the whole graph.
 export default function LanguageEtymologyDisplay({
   display,
   languageId,
@@ -35,11 +52,19 @@ export default function LanguageEtymologyDisplay({
   languageId: string;
   canEdit: boolean;
 }) {
+  const svgRef = useRef<SVGSVGElement>(null);
+  const measureRef = useRef<SVGTextElement>(null);
+  const [rawNodes, setRawNodes] = useState<RawNode[] | null>(null);
+  const [edges, setEdges] = useState<RawEdge[]>([]);
   const [nodes, setNodes] = useState<GraphNode[]>([]);
-  const [links, setLinks] = useState<GraphLink[]>([]);
+  const [charOffsetsById, setCharOffsetsById] = useState<Record<string, number[]>>({});
   const [loaded, setLoaded] = useState(false);
-  const dragRef = useRef<{ id: string; moved: boolean } | null>(null);
-  const savedPositions = (display.config.positions as Record<string, { x: number; y: number }>) || {};
+
+  const [tx, setTx] = useState(0);
+  const [ty, setTy] = useState(0);
+  const [scale, setScale] = useState(1);
+  const panRef = useRef<{ startX: number; startY: number; startTx: number; startTy: number } | null>(null);
+  const dragRef = useRef<{ id: string; offsetX: number; offsetY: number; moved: boolean } | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -58,145 +83,261 @@ export default function LanguageEtymologyDisplay({
 
       if (!active) return;
 
-      const allLexemes = [...(nativeLexemes || []), ...(ancestorLexemes || [])];
       const nativeIdSet = new Set(nativeIds);
-
-      const builtNodes: GraphNode[] = allLexemes.map((w) => {
-        const saved = savedPositions[w.id];
-        return {
-          id: w.id,
-          form: w.form,
-          languageId: w.language_id,
-          native: nativeIdSet.has(w.id),
-          x: saved?.x,
-          y: saved?.y,
-        };
-      });
-      const builtLinks: GraphLink[] = (etys || []).map((e) => ({ source: e.descendant_lexeme_id, target: e.ancestor_lexeme_id }));
-
-      layoutNewNodes(builtNodes, builtLinks);
-      setNodes(builtNodes);
-      setLinks(builtLinks);
-      setLoaded(true);
+      const allLexemes = [...(nativeLexemes || []), ...(ancestorLexemes || [])];
+      setRawNodes(allLexemes.map((w) => ({ id: w.id, form: w.form, languageId: w.language_id, native: nativeIdSet.has(w.id) })));
+      setEdges((etys || []).map((e) => ({ descendantId: e.descendant_lexeme_id, ancestorId: e.ancestor_lexeme_id, ranges: e.grapheme_ranges })));
     })();
     return () => {
       active = false;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [languageId, display.id]);
+
+  // Layout: runs once raw data is in and the hidden measurer is mounted.
+  useEffect(() => {
+    if (!rawNodes || !measureRef.current) return;
+    const measureEl = measureRef.current;
+
+    function charOffsets(word: string): number[] {
+      const offsets = [0];
+      let cum = 0;
+      for (const ch of word) {
+        measureEl.textContent = ch;
+        cum += measureEl.getBBox().width || 6;
+        offsets.push(cum);
+      }
+      return offsets;
+    }
+
+    const offsetsById: Record<string, number[]> = {};
+    const widthById: Record<string, number> = {};
+    rawNodes.forEach((n) => {
+      const offsets = n.form.length ? charOffsets(n.form) : [0, 10];
+      offsetsById[n.id] = offsets;
+      widthById[n.id] = offsets[offsets.length - 1] + NODE_PAD_X * 2;
+    });
+
+    const parentsOf = new Map<string, string[]>();
+    edges.forEach((e) => {
+      const list = parentsOf.get(e.descendantId) || [];
+      list.push(e.ancestorId);
+      parentsOf.set(e.descendantId, list);
+    });
+
+    const depthById = new Map<string, number>();
+    function depthOf(id: string, seen: Set<string>): number {
+      if (depthById.has(id)) return depthById.get(id)!;
+      if (seen.has(id)) return 0; // cycle guard — shouldn't happen, DB checks for cycles
+      seen.add(id);
+      const parents = parentsOf.get(id) || [];
+      const d = parents.length ? Math.max(...parents.map((p) => depthOf(p, seen))) + 1 : 0;
+      depthById.set(id, d);
+      return d;
+    }
+    rawNodes.forEach((n) => depthOf(n.id, new Set()));
+
+    const rows = new Map<number, string[]>();
+    rawNodes.forEach((n) => {
+      const d = depthById.get(n.id)!;
+      const list = rows.get(d) || [];
+      list.push(n.id);
+      rows.set(d, list);
+    });
+    const maxDepth = Math.max(0, ...rows.keys());
+    const formById = Object.fromEntries(rawNodes.map((n) => [n.id, n.form]));
+    const xById = new Map<string, number>();
+
+    for (let d = 0; d <= maxDepth; d++) {
+      const ids = rows.get(d) || [];
+      if (d === 0) {
+        ids.sort((a, b) => formById[a].localeCompare(formById[b]));
+      } else {
+        ids.sort((a, b) => {
+          const avgX = (id: string) => {
+            const parents = parentsOf.get(id) || [];
+            if (!parents.length) return 0;
+            return parents.reduce((s, p) => s + (xById.get(p) || 0), 0) / parents.length;
+          };
+          return avgX(a) - avgX(b);
+        });
+      }
+      let cursor = 0;
+      ids.forEach((id) => {
+        const w = widthById[id];
+        xById.set(id, cursor + w / 2);
+        cursor += w + NODE_GAP;
+      });
+    }
+
+    const savedPositions = (display.config.positions as Record<string, { x: number; y: number }>) || {};
+    const built: GraphNode[] = rawNodes.map((n) => {
+      const saved = savedPositions[n.id];
+      const defaultX = xById.get(n.id)!;
+      const defaultY = TOP_PAD + depthById.get(n.id)! * ROW_HEIGHT + NODE_HEIGHT / 2;
+      return {
+        id: n.id,
+        form: n.form,
+        languageId: n.languageId,
+        native: n.native,
+        width: widthById[n.id],
+        height: NODE_HEIGHT,
+        x: saved ? saved.x : defaultX,
+        y: saved ? saved.y : defaultY,
+      };
+    });
+
+    setCharOffsetsById(offsetsById);
+    setNodes(built);
+    setLoaded(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rawNodes, edges, display.id]);
 
   async function persistPositions(next: GraphNode[]) {
     const positions: Record<string, { x: number; y: number }> = {};
     next.forEach((n) => {
-      if (typeof n.x === 'number' && typeof n.y === 'number') positions[n.id] = { x: n.x, y: n.y };
+      positions[n.id] = { x: n.x, y: n.y };
     });
     await supabase.from('displays').update({ config: { ...display.config, positions } }).eq('id', display.id);
   }
 
-  function onNodeDown(e: React.MouseEvent, id: string) {
+  function toWorld(clientX: number, clientY: number) {
+    const rect = svgRef.current!.getBoundingClientRect();
+    return { x: (clientX - rect.left - tx) / scale, y: (clientY - rect.top - ty) / scale };
+  }
+
+  function onNodeDown(e: React.MouseEvent, n: GraphNode) {
     e.stopPropagation();
     if (!canEdit) {
-      navigate(`/lexemes/${id}`);
+      navigate(`/lexemes/${n.id}`);
       return;
     }
-    dragRef.current = { id, moved: false };
+    const w = toWorld(e.clientX, e.clientY);
+    dragRef.current = { id: n.id, offsetX: w.x - n.x, offsetY: w.y - n.y, moved: false };
+  }
+
+  function onBackgroundDown(e: React.MouseEvent) {
+    panRef.current = { startX: e.clientX, startY: e.clientY, startTx: tx, startTy: ty };
   }
 
   function onSvgMouseMove(e: React.MouseEvent<SVGSVGElement>) {
-    if (!canEdit || !dragRef.current) return;
-    const svg = e.currentTarget.getBoundingClientRect();
-    const x = e.clientX - svg.left;
-    const y = e.clientY - svg.top;
-    dragRef.current.moved = true;
-    setNodes((prev) => prev.map((n) => (n.id === dragRef.current!.id ? { ...n, x, y } : n)));
+    if (dragRef.current) {
+      const w = toWorld(e.clientX, e.clientY);
+      dragRef.current.moved = true;
+      const id = dragRef.current.id;
+      const { offsetX, offsetY } = dragRef.current;
+      setNodes((prev) => prev.map((n) => (n.id === id ? { ...n, x: w.x - offsetX, y: w.y - offsetY } : n)));
+    } else if (panRef.current) {
+      const { startX, startY, startTx, startTy } = panRef.current;
+      setTx(startTx + (e.clientX - startX));
+      setTy(startTy + (e.clientY - startY));
+    }
   }
 
   function onSvgMouseUp() {
-    if (!dragRef.current) return;
-    const { id, moved } = dragRef.current;
-    dragRef.current = null;
-    if (moved) {
-      setNodes((current) => {
-        persistPositions(current);
-        return current;
-      });
-    } else {
-      navigate(`/lexemes/${id}`);
+    if (dragRef.current) {
+      const { id, moved } = dragRef.current;
+      dragRef.current = null;
+      if (moved) persistPositions(nodes);
+      else navigate(`/lexemes/${id}`);
     }
+    panRef.current = null;
   }
 
-  const linkPaths = useMemo(() => {
-    const byId = Object.fromEntries(nodes.map((n) => [n.id, n]));
-    return links
-      .map((l) => ({ a: byId[l.source], b: byId[l.target] }))
-      .filter((p) => p.a && p.b && typeof p.a.x === 'number' && typeof p.b.x === 'number');
-  }, [nodes, links]);
+  function onWheel(e: React.WheelEvent<SVGSVGElement>) {
+    e.preventDefault();
+    const rect = svgRef.current!.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+    const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+    const next = Math.min(6, Math.max(0.2, scale * factor));
+    setTx(mx - (mx - tx) * (next / scale));
+    setTy(my - (my - ty) * (next / scale));
+    setScale(next);
+  }
 
-  if (!loaded) return <div className="hint">Loading…</div>;
-  if (!nodes.length) return <div className="hint">No lexemes yet — add some to this language to see its etymology.</div>;
+  function recenter() {
+    setTx(0);
+    setTy(0);
+    setScale(1);
+  }
+
+  const bands = useMemo(() => {
+    const byId = Object.fromEntries(nodes.map((n) => [n.id, n]));
+    const out: { key: string; d: string; color: string }[] = [];
+    edges.forEach((e, i) => {
+      const anc = byId[e.ancestorId];
+      const desc = byId[e.descendantId];
+      if (!anc || !desc) return;
+      const ranges = e.ranges && e.ranges.length ? e.ranges : [{ start: 0, end: desc.form.length }];
+      const offsets = charOffsetsById[desc.id];
+      ranges.forEach((r, j) => {
+        const descLeft = desc.x - desc.width / 2 + NODE_PAD_X;
+        const tx0 = offsets ? descLeft + offsets[Math.max(0, Math.min(r.start, offsets.length - 1))] : desc.x - desc.width / 2;
+        const tx1 = offsets ? descLeft + offsets[Math.max(0, Math.min(r.end, offsets.length - 1))] : desc.x + desc.width / 2;
+        const ax0 = anc.x - anc.width / 2;
+        const ax1 = anc.x + anc.width / 2;
+        const ay = anc.y + anc.height / 2;
+        const dy = desc.y - desc.height / 2;
+        const midY = (ay + dy) / 2;
+        out.push({
+          key: `${i}-${j}`,
+          color: colorFor(anc.languageId),
+          d: `M${ax0},${ay} C${ax0},${midY} ${tx0},${midY} ${tx0},${dy} L${tx1},${dy} C${tx1},${midY} ${ax1},${midY} ${ax1},${ay} Z`,
+        });
+      });
+    });
+    return out;
+  }, [nodes, edges, charOffsetsById]);
 
   return (
-    <svg
-      width={WIDTH}
-      height={HEIGHT}
-      className="etymology-graph-svg"
-      onMouseMove={onSvgMouseMove}
-      onMouseUp={onSvgMouseUp}
-      onMouseLeave={() => (dragRef.current = null)}
-    >
-      {linkPaths.map((p, i) => (
-        <line key={i} x1={p.a.x} y1={p.a.y} x2={p.b.x} y2={p.b.y} stroke="var(--paper-darker)" strokeWidth={1} />
-      ))}
-      {nodes.map((n) => (
-        <g
-          key={n.id}
-          transform={`translate(${n.x ?? WIDTH / 2},${n.y ?? HEIGHT / 2})`}
-          onMouseDown={(e) => onNodeDown(e, n.id)}
-          style={{ cursor: canEdit ? 'grab' : 'pointer' }}
-        >
-          <circle r={n.native ? 7 : 5} fill={colorFor(n.languageId)} opacity={n.native ? 1 : 0.65} />
-          <text x={10} y={4} fontSize={11} fontFamily="Cormorant Garamond, serif" fill="var(--ink)">
-            {n.form}
+    <div>
+      <button className="btn secondary" style={{ marginBottom: '0.5rem' }} onClick={recenter}>
+        Re-center
+      </button>
+      <svg
+        ref={svgRef}
+        width={VIEW_W}
+        height={VIEW_H}
+        className="etymology-graph-svg"
+        onMouseDown={onBackgroundDown}
+        onMouseMove={onSvgMouseMove}
+        onMouseUp={onSvgMouseUp}
+        onMouseLeave={() => {
+          dragRef.current = null;
+          panRef.current = null;
+        }}
+        onWheel={onWheel}
+      >
+        <text ref={measureRef} fontSize={13} fontFamily="Cormorant Garamond, serif" style={{ opacity: 0 }} />
+        {!loaded && (
+          <text x={20} y={30} fontSize={12} fontFamily="DM Mono, monospace" fill="var(--ink-light)">
+            Loading…
           </text>
+        )}
+        {rawNodes && !rawNodes.length && (
+          <text x={20} y={30} fontSize={12} fontFamily="DM Mono, monospace" fill="var(--ink-light)">
+            No lexemes yet — add some to this language to see its etymology.
+          </text>
+        )}
+        <g transform={`translate(${tx},${ty}) scale(${scale})`}>
+          {bands.map((b) => (
+            <path key={b.key} d={b.d} fill={b.color} opacity={0.28} stroke="none" />
+          ))}
+          {nodes.map((n) => (
+            <g
+              key={n.id}
+              transform={`translate(${n.x - n.width / 2},${n.y - n.height / 2})`}
+              onMouseDown={(e) => onNodeDown(e, n)}
+              style={{ cursor: canEdit ? 'grab' : 'pointer' }}
+            >
+              <rect width={n.width} height={n.height} fill="var(--paper)" stroke={colorFor(n.languageId)} strokeWidth={n.native ? 2 : 1.5} />
+              <text x={n.width / 2} y={n.height / 2 + 5} textAnchor="middle" fontSize={13} fontFamily="Cormorant Garamond, serif" fill="var(--ink)">
+                {n.form}
+              </text>
+            </g>
+          ))}
         </g>
-      ))}
-    </svg>
+      </svg>
+    </div>
   );
-}
-
-// Runs a small, localized simulation that only moves nodes without a saved
-// position — everything already placed stays fixed (fx/fy pinned) — so
-// adding or removing lexemes never reshuffles the whole graph.
-function layoutNewNodes(nodes: GraphNode[], links: GraphLink[]) {
-  const unresolved = nodes.filter((n) => typeof n.x !== 'number' || typeof n.y !== 'number');
-  if (!unresolved.length) return;
-
-  nodes.forEach((n) => {
-    if (typeof n.x === 'number' && typeof n.y === 'number') {
-      (n as GraphNode & { fx?: number; fy?: number }).fx = n.x;
-      (n as GraphNode & { fx?: number; fy?: number }).fy = n.y;
-    } else {
-      n.x = WIDTH / 2 + (Math.random() - 0.5) * 40;
-      n.y = HEIGHT / 2 + (Math.random() - 0.5) * 40;
-    }
-  });
-
-  const sim = forceSimulation(nodes)
-    .force(
-      'link',
-      forceLink(links as unknown as { source: string; target: string }[])
-        .id((d: unknown) => (d as GraphNode).id)
-        .distance(70)
-    )
-    .force('charge', forceManyBody().strength(-120))
-    .force('collide', forceCollide(18))
-    .force('center', forceCenter(WIDTH / 2, HEIGHT / 2))
-    .stop();
-
-  for (let i = 0; i < 200; i++) sim.tick();
-
-  nodes.forEach((n) => {
-    delete (n as GraphNode & { fx?: number; fy?: number }).fx;
-    delete (n as GraphNode & { fx?: number; fy?: number }).fy;
-  });
 }
