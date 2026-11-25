@@ -77,7 +77,9 @@ export default function Header({ userId }: { userId: string }) {
         )}
       </div>
 
-      <span className="nav-title">Etymograph</span>
+      <span className="nav-title link" onClick={() => navigate('/')}>
+        Etymograph
+      </span>
 
       <div className="icon-anchor">
         <span

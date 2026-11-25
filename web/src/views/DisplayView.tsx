@@ -1,10 +1,11 @@
 import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { navigate } from '../lib/router';
-import { fetchLanguagePermissions } from '../lib/permissions';
+import { fetchLanguagePermissions, canEditDisplay } from '../lib/permissions';
 import { findOrCreateEtymologyDisplay, findOrCreateGenealogyDisplay } from '../lib/displays';
 import EtymologyDisplay from './EtymologyDisplay';
 import GenealogyDisplay from './GenealogyDisplay';
+import LanguageEtymologyDisplay from './LanguageEtymologyDisplay';
 import type { Display, Language, LanguageGenealogyEdge, Lexeme } from '../types';
 
 // The one view that keeps the sidebar+canvas shell from the original
@@ -17,6 +18,7 @@ export default function DisplayView({ displayId, userId }: { displayId: string; 
   const [rootLanguage, setRootLanguage] = useState<Language | null>(null);
   const [parentEdges, setParentEdges] = useState<LanguageGenealogyEdge[]>([]);
   const [canEditContent, setCanEditContent] = useState(false);
+  const [canEdit, setCanEdit] = useState(false);
   const [isSaved, setIsSaved] = useState(false);
   const [error, setError] = useState('');
 
@@ -31,6 +33,7 @@ export default function DisplayView({ displayId, userId }: { displayId: string; 
     }
     setError('');
     setDisplay(d);
+    setCanEdit(await canEditDisplay(d, userId));
 
     if (d.kind === 'etymology' && d.root_lexeme_id) {
       const { data: w } = await supabase.from('lexemes').select('*').eq('id', d.root_lexeme_id).single();
@@ -39,11 +42,13 @@ export default function DisplayView({ displayId, userId }: { displayId: string; 
         const { canEditContent: editable } = await fetchLanguagePermissions(w.language_id, userId);
         setCanEditContent(editable);
       }
-    } else if (d.kind === 'genealogy' && d.root_language_id) {
+    } else if (d.root_language_id) {
       const { data: lang } = await supabase.from('languages').select('*').eq('id', d.root_language_id).single();
       setRootLanguage(lang || null);
-      const { data: edges } = await supabase.from('language_genealogy').select('*').eq('child_language_id', d.root_language_id);
-      setParentEdges(edges || []);
+      if (d.kind === 'genealogy') {
+        const { data: edges } = await supabase.from('language_genealogy').select('*').eq('child_language_id', d.root_language_id);
+        setParentEdges(edges || []);
+      }
     }
 
     const { data: saved } = await supabase.from('saved_displays').select('*').eq('user_id', userId).eq('display_id', displayId).maybeSingle();
@@ -109,8 +114,6 @@ export default function DisplayView({ displayId, userId }: { displayId: string; 
   if (error) return <div className="err">{error}</div>;
   if (!display) return <div className="hint">Loading…</div>;
 
-  const isOwner = display.owner_id === userId;
-
   return (
     <div className="app-body">
       <aside className="sidebar">
@@ -135,7 +138,7 @@ export default function DisplayView({ displayId, userId }: { displayId: string; 
 
       <main className="main-panel">
         <div className="view-title">
-          {isOwner ? (
+          {canEdit ? (
             <input
               className="text-input display-title-input"
               defaultValue={display.title}
@@ -144,11 +147,14 @@ export default function DisplayView({ displayId, userId }: { displayId: string; 
           ) : (
             display.title
           )}
-          <span className="badge">{display.kind} display</span>
+          <span className="badge">
+            {display.is_main ? 'main ' : ''}
+            {display.kind} display
+          </span>
         </div>
 
         <div className="form-row" style={{ marginBottom: '1.5rem' }}>
-          {isOwner ? (
+          {canEdit ? (
             <label className="checkbox-label inline">
               <input type="checkbox" checked={display.visibility === 'private'} onChange={(e) => setVisibility(e.target.checked ? 'private' : 'public')} />
               Private
@@ -158,7 +164,7 @@ export default function DisplayView({ displayId, userId }: { displayId: string; 
               {isSaved ? 'Unsave' : 'Save'} display
             </button>
           )}
-          {isOwner && (
+          {canEdit && !display.is_main && (
             <button className="btn secondary danger" onClick={deleteDisplay}>
               Delete display
             </button>
@@ -175,6 +181,16 @@ export default function DisplayView({ displayId, userId }: { displayId: string; 
             <EtymologyDisplay lexeme={rootLexeme} userId={userId} canEditContent={canEditContent} />
           </>
         )}
+        {display.kind === 'etymology' && display.is_main && rootLanguage && (
+          <>
+            <div className="view-subtitle">
+              <span className="link" onClick={() => navigate(`/languages/${rootLanguage.id}`)}>
+                {rootLanguage.name}
+              </span>
+            </div>
+            <LanguageEtymologyDisplay display={display} languageId={rootLanguage.id} canEdit={canEdit} />
+          </>
+        )}
         {display.kind === 'genealogy' && rootLanguage && (
           <>
             <div className="view-subtitle">
@@ -182,7 +198,7 @@ export default function DisplayView({ displayId, userId }: { displayId: string; 
                 {rootLanguage.name}
               </span>
             </div>
-            <GenealogyDisplay language={rootLanguage} parentEdges={parentEdges} />
+            <GenealogyDisplay language={rootLanguage} parentEdges={parentEdges} display={display} canEdit={canEdit} />
           </>
         )}
       </main>

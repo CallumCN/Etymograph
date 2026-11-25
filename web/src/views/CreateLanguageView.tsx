@@ -1,13 +1,19 @@
 import { useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { navigate } from '../lib/router';
+import { createMainDisplaysForLanguage } from '../lib/displays';
 
 function slugify(s: string) {
   return s.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 }
 
+function randomId() {
+  return Math.random().toString(36).slice(2, 10);
+}
+
 export default function CreateLanguageView({ userId }: { userId: string }) {
   const [name, setName] = useState('');
+  const [slug, setSlug] = useState(() => randomId());
   const [familyName, setFamilyName] = useState('');
   const [kind, setKind] = useState<'natural' | 'constructed'>('natural');
   const [visibility, setVisibility] = useState<'public' | 'private'>('public');
@@ -20,6 +26,18 @@ export default function CreateLanguageView({ userId }: { userId: string }) {
       setError('Name is required.');
       return;
     }
+    const finalSlug = slugify(slug);
+    if (!finalSlug) {
+      setError('Id is required.');
+      return;
+    }
+
+    const { data: clash } = await supabase.from('languages').select('id').eq('slug', finalSlug).maybeSingle();
+    if (clash) {
+      setError('That id is already taken — choose another.');
+      return;
+    }
+
     const isConstructed = kind === 'constructed';
     let vis: 'public' | 'private' = 'public';
     let editable = false;
@@ -38,12 +56,11 @@ export default function CreateLanguageView({ userId }: { userId: string }) {
       }
     }
 
-    const slug = `${slugify(name)}-${Math.random().toString(36).slice(2, 7)}`;
     const { data: lang, error: insertError } = await supabase
       .from('languages')
       .insert({
         name,
-        slug,
+        slug: finalSlug,
         is_constructed: isConstructed,
         visibility: vis,
         publicly_editable: editable,
@@ -56,7 +73,7 @@ export default function CreateLanguageView({ userId }: { userId: string }) {
       .single();
 
     if (insertError || !lang) {
-      setError(insertError?.message || 'Could not create language.');
+      setError(insertError?.code === '23505' ? 'That id is already taken — choose another.' : insertError?.message || 'Could not create language.');
       return;
     }
 
@@ -67,6 +84,8 @@ export default function CreateLanguageView({ userId }: { userId: string }) {
       if (ownErr) console.error(ownErr);
     }
 
+    await createMainDisplaysForLanguage(lang.id, lang.name, userId, vis);
+
     navigate(`/languages/${lang.id}`);
   }
 
@@ -76,6 +95,10 @@ export default function CreateLanguageView({ userId }: { userId: string }) {
       <div className="form-group">
         <label>Name</label>
         <input className="text-input" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Old Marish" />
+      </div>
+      <div className="form-group">
+        <label>Id <span className="hint-inline">(a random one is suggested — customize it if you like)</span></label>
+        <input className="text-input" value={slug} onChange={(e) => setSlug(slugify(e.target.value))} />
       </div>
       <div className="form-group">
         <label>

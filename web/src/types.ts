@@ -88,6 +88,7 @@ export interface Display {
   visibility: Visibility;
   root_lexeme_id: string | null;
   root_language_id: string | null;
+  is_main: boolean;
   config: Record<string, unknown>;
   created_at: string;
   updated_at: string;

@@ -216,3 +216,5 @@ a:hover, .link:hover { text-decoration: underline; }
 .candidates { margin-top: 0.4rem; }
 
 .display-title-input { max-width: 420px; font-size: 1.3rem; font-family: 'Cormorant Garamond', serif; }
+
+.etymology-graph-svg { border: 1px solid var(--paper-dark); background: var(--paper-mid); max-width: 100%; }

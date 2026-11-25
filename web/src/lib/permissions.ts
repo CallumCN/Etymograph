@@ -1,5 +1,5 @@
 import { supabase } from './supabase';
-import type { Language } from '../types';
+import type { Display, Language } from '../types';
 
 // Shared rule, used wherever a view needs to know whether the current user
 // may edit a language's lexemes/etymologies (not the language row itself,
@@ -20,4 +20,15 @@ export async function fetchLanguagePermissions(languageId: string, userId: strin
     (language?.visibility === 'public' && !!language?.publicly_editable);
 
   return { language: language as Language, canGovern, canEditContent };
+}
+
+// A main display is co-owned by every owner of its language (not just
+// whichever one happened to create it, which is all `display.owner_id`
+// records) — a custom non-main display stays single-owner.
+export async function canEditDisplay(display: Display, userId: string): Promise<boolean> {
+  if (display.is_main && display.root_language_id) {
+    const { canGovern } = await fetchLanguagePermissions(display.root_language_id, userId);
+    return canGovern;
+  }
+  return display.owner_id === userId;
 }

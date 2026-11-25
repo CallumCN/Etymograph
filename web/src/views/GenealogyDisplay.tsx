@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { colorFor } from '../lib/colors';
-import type { Language, LanguageGenealogyEdge } from '../types';
+import type { Display, Language, LanguageGenealogyEdge } from '../types';
 
 interface Row {
   id: string;
@@ -28,9 +28,13 @@ interface Segment {
 export default function GenealogyDisplay({
   language,
   parentEdges,
+  display,
+  canEdit,
 }: {
   language: Language;
   parentEdges: LanguageGenealogyEdge[];
+  display: Display;
+  canEdit: boolean;
 }) {
   const [rows, setRows] = useState<Row[]>([]);
   const [total, setTotal] = useState(0);
@@ -64,14 +68,25 @@ export default function GenealogyDisplay({
       if (!active) return;
       setTotal(t);
       setRows(r);
-      const primaryOnly = r.filter((x) => x.primary);
-      setChecked(new Set((primaryOnly.length ? primaryOnly : r).map((x) => x.id)));
+
+      const savedSelection = display.config.selectedSources as string[] | undefined;
+      if (savedSelection) {
+        setChecked(new Set(savedSelection.filter((id) => r.some((row) => row.id === id))));
+      } else {
+        const primaryOnly = r.filter((x) => x.primary);
+        setChecked(new Set((primaryOnly.length ? primaryOnly : r).map((x) => x.id)));
+      }
       setLoaded(true);
     })();
     return () => {
       active = false;
     };
-  }, [language.id, parentEdges]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [language.id, parentEdges, display.id]);
+
+  function persistSelection(next: Set<string>) {
+    supabase.from('displays').update({ config: { ...display.config, selectedSources: [...next] } }).eq('id', display.id);
+  }
 
   if (!loaded) return <div className="hint">Loading…</div>;
   if (!total) return <div className="hint">No lexemes yet.</div>;
@@ -82,8 +97,21 @@ export default function GenealogyDisplay({
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
+      persistSelection(next);
       return next;
     });
+  }
+
+  function selectAll() {
+    const next = new Set(rows.map((r) => r.id));
+    setChecked(next);
+    persistSelection(next);
+  }
+
+  function selectPrimaryOnly() {
+    const next = new Set(rows.filter((r) => r.primary).map((r) => r.id));
+    setChecked(next);
+    persistSelection(next);
   }
 
   const plotW = 640;
@@ -111,18 +139,20 @@ export default function GenealogyDisplay({
 
   return (
     <div>
-      <div className="form-row">
-        <button className="btn secondary" onClick={() => setChecked(new Set(rows.map((r) => r.id)))}>
-          Select all
-        </button>
-        <button className="btn secondary" onClick={() => setChecked(new Set(rows.filter((r) => r.primary).map((r) => r.id)))}>
-          Only primary parents
-        </button>
-      </div>
+      {canEdit && (
+        <div className="form-row">
+          <button className="btn secondary" onClick={selectAll}>
+            Select all
+          </button>
+          <button className="btn secondary" onClick={selectPrimaryOnly}>
+            Only primary parents
+          </button>
+        </div>
+      )}
       <div className="checklist">
         {rows.map((r) => (
           <label key={r.id} className="checklist-row">
-            <input type="checkbox" checked={checked.has(r.id)} onChange={() => toggle(r.id)} />
+            <input type="checkbox" checked={checked.has(r.id)} disabled={!canEdit} onChange={() => toggle(r.id)} />
             <span className="swatch" style={{ background: colorFor(r.id) }} />
             {r.name} {r.primary && <span className="tag">primary</span>}
             <span className="pct">{((100 * r.count) / total).toFixed(1)}%</span>
