@@ -161,6 +161,55 @@ export default function LanguageView({ languageId, userId }: { languageId: strin
     reload();
   }
 
+  // Kept reachable whenever the viewer already has an ownership row,
+  // regardless of the language's *current* is_constructed value — so
+  // converting constructed -> natural (which hides the Owners/Governance
+  // sections, since those only render for constructed languages) doesn't
+  // strand the owner without a way to convert back. Their ownership row
+  // is never deleted by this, just temporarily moot while it's natural.
+  async function setIsConstructed(makeConstructed: boolean) {
+    if (!makeConstructed) {
+      if (
+        !confirm(
+          'Convert this to a natural language? It becomes public and open to editing by anyone — you can convert it back later.'
+        )
+      ) {
+        return;
+      }
+      const { error: err } = await supabase
+        .from('languages')
+        .update({ is_constructed: false, visibility: 'public', publicly_editable: false })
+        .eq('id', languageId);
+      if (err) {
+        alert(err.message);
+        return;
+      }
+    } else {
+      const { error: err } = await supabase.from('languages').update({ is_constructed: true }).eq('id', languageId);
+      if (err) {
+        alert(err.message);
+        return;
+      }
+    }
+    reload();
+  }
+
+  async function deleteLanguage() {
+    if (
+      !confirm(
+        `Delete "${language?.name}"? This permanently removes all its lexemes, etymologies, genealogy links, and displays. This cannot be undone.`
+      )
+    ) {
+      return;
+    }
+    const { error: err } = await supabase.from('languages').delete().eq('id', languageId);
+    if (err) {
+      alert(err.message);
+      return;
+    }
+    navigate('/');
+  }
+
   async function setPubliclyEditable(val: boolean) {
     const { error: err } = await supabase.from('languages').update({ publicly_editable: val }).eq('id', languageId);
     if (err) {
@@ -321,6 +370,16 @@ export default function LanguageView({ languageId, userId }: { languageId: strin
           <button className="btn secondary" onClick={saveRename}>
             Save title &amp; id
           </button>
+        </div>
+      )}
+
+      {editing && iCanGovern && (
+        <div className="section">
+          <div className="section-label">Language type</div>
+          <label className="checkbox-label inline">
+            <input type="checkbox" checked={language.is_constructed} onChange={(e) => setIsConstructed(e.target.checked)} /> Constructed
+          </label>
+          <div className="hint">Unchecking this makes it a natural language: always public, open to editing by anyone.</div>
         </div>
       )}
 
@@ -537,6 +596,15 @@ export default function LanguageView({ languageId, userId }: { languageId: strin
         <div className="section-label">Public edit history</div>
         <div className="hint">Not wired up yet — revision writes need a trusted server-side function (schema's ready; see migration 0001).</div>
       </div>
+
+      {editing && iCanGovern && (
+        <div className="section">
+          <div className="section-label">Danger zone</div>
+          <button className="btn secondary danger" onClick={deleteLanguage}>
+            Delete language
+          </button>
+        </div>
+      )}
     </div>
   );
 }
